@@ -1,19 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package kafka.examples;
 
 import org.apache.kafka.clients.producer.Callback;
@@ -40,9 +24,10 @@ public class Producer extends Thread {
         this.isAsync = isAsync;
     }
 
+    @Override
     public void run() {
         int messageNo = 1;
-        while (true) {
+        while (messageNo<=20) {
             String messageStr = "Message_" + messageNo;
             long startTime = System.currentTimeMillis();
             if (isAsync) { // Send asynchronously
@@ -54,7 +39,7 @@ public class Producer extends Thread {
                     producer.send(new ProducerRecord<>(topic,
                         messageNo,
                         messageStr)).get();
-                    System.out.println("Sent message: (" + messageNo + ", " + messageStr + ")");
+                    System.out.println("发送消息: (" + messageNo + ", " + messageStr + ")");
                 } catch (InterruptedException | ExecutionException e) {
                     e.printStackTrace();
                 }
@@ -85,13 +70,14 @@ class DemoCallBack implements Callback {
      *                  occurred.
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
      */
+    @Override
     public void onCompletion(RecordMetadata metadata, Exception exception) {
         long elapsedTime = System.currentTimeMillis() - startTime;
         if (metadata != null) {
             System.out.println(
-                "message(" + key + ", " + message + ") sent to partition(" + metadata.partition() +
+                "消息(" + key + ", " + message + ") 发送的partition是(" + metadata.partition() +
                     "), " +
-                    "offset(" + metadata.offset() + ") in " + elapsedTime + " ms");
+                    "offset是(" + metadata.offset() + ") 在 " + elapsedTime + " ms");
         } else {
             exception.printStackTrace();
         }
