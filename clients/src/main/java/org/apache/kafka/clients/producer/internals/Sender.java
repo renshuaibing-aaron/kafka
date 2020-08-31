@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- * 
- * http://www.apache.org/licenses/LICENSE-2.0
- * 
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.clients.producer.internals;
 
 import java.nio.ByteBuffer;
@@ -58,42 +46,66 @@ public class Sender implements Runnable {
 
     private static final Logger log = LoggerFactory.getLogger(Sender.class);
 
+
+    //kafka 网络通信客户端，主要封装与 broker 的网络通信
     /* the state of each nodes connection */
     private final KafkaClient client;
 
+
+    //消息记录累积器，消息追加的入口(RecordAccumulator 的 append 方法)
     /* the record accumulator that batches records */
     private final RecordAccumulator accumulator;
 
+
+    //元数据管理器，即 topic 的路由分区信息
     /* the metadata for the client */
     private final Metadata metadata;
 
+
+    //是否需要保证消息的顺序性
     /* the flag indicating whether the producer should guarantee the message order on the broker or not. */
     private final boolean guaranteeMessageOrder;
 
+
+    //调用 send 方法发送的最大请求大小，包括 key、消息体序列化后的消息总大小不能超过该值。通过参数 max.request.size 来设置
     /* the maximum request size to attempt to send to the server */
     private final int maxRequestSize;
 
+
+    //用来定义消息“已提交”的条件(标准)，就是 Broker 端向客户端承偌已提交的条件，可选值如下0、-1、1
     /* the number of acknowledgements to request from the server */
     private final short acks;
 
+
+    //重试次数
     /* the number of times to retry a failed request before giving up */
     private final int retries;
 
+
+    //时间工具类
     /* the clock instance used for getting the time */
     private final Time time;
 
+
+    //该线程状态，为 true 表示运行中
     /* true while the sender thread is still running */
     private volatile boolean running;
 
+
+    //是否强制关闭，此时会忽略正在发送中的消息
     /* true when the caller wants to ignore all unsent/inflight messages and force close.  */
     private volatile boolean forceClose;
 
+
+    //消息发送相关的统计指标收集器
     /* metrics */
     private final SenderMetrics sensors;
 
     /* param clientId of the client */
     private String clientId;
 
+
+    //请求的超时时间
     /* the max time to wait for the server to respond to the request*/
     private final int requestTimeout;
 
@@ -165,7 +177,7 @@ public class Sender implements Runnable {
 
     /**
      * Run a single iteration of sending
-     * 
+     *
      * @param now
      *            The current POSIX time in milliseconds
      */
@@ -284,7 +296,7 @@ public class Sender implements Runnable {
 
     /**
      * Complete or retry the given batch of records.
-     * 
+     *
      * @param batch The record batch
      * @param error The error (or null if none)
      * @param baseOffset The base offset assigned to the records if successful
