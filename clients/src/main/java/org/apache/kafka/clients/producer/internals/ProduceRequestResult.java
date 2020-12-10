@@ -1,19 +1,4 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+
 package org.apache.kafka.clients.producer.internals;
 
 import java.util.concurrent.CountDownLatch;
@@ -23,14 +8,17 @@ import org.apache.kafka.common.TopicPartition;
 
 
 /**
+ *这个类本身并没有实现Future这个接口 但是它通过一个CountDownLatch 间接实现这个功能
  * A class that models the future completion of a produce request for a single partition. There is one of these per
  * partition in a produce request and it is shared by all the {@link RecordMetadata} instances that are batched together
  * for the same partition in the request.
  */
 public final class ProduceRequestResult {
 
+    //利用这个值 实现future的功能
     private final CountDownLatch latch = new CountDownLatch(1);
     private volatile TopicPartition topicPartition;
+    //服务端为此RecordBatch中的第一条消息的分配的offset 作用每个消息可以根据此基线加相对偏移量
     private volatile long baseOffset = -1L;
     private volatile RuntimeException error;
 

@@ -483,36 +483,82 @@ import java.util.regex.Pattern;
  * There are many possible variations on this approach. For example each processor thread can have its own queue, and
  * the consumer threads can hash into these queues using the TopicPartition to ensure in-order consumption and simplify
  * commit.
- *
+ *  todo 线程不安全  为什么线程不安全？
  */
 public class KafkaConsumer<K, V> implements Consumer<K, V> {
 
     private static final Logger log = LoggerFactory.getLogger(KafkaConsumer.class);
     private static final long NO_CURRENT_THREAD = -1L;
+
+    //clientID 生成器
     private static final AtomicInteger CONSUMER_CLIENT_ID_SEQUENCE = new AtomicInteger(1);
     private static final String JMX_PREFIX = "kafka.consumer";
 
+    //clientID
     private final String clientId;
+    //控制着consumer与服务端GroupCoordinaor之间的通信逻辑
     private final ConsumerCoordinator coordinator;
+
+    //反序列化器
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
+
+    //负责从服务端获取消息
     private final Fetcher<K, V> fetcher;
+
+    //ConsumerInterceptor 集合 拦截器 注意和生产者对比  拦截器可以对poll和commit方法前进行拦截处理
     private final ConsumerInterceptors<K, V> interceptors;
 
     private final Time time;
+    //负责消费者和服务端的通信
     private final ConsumerNetworkClient client;
     private final Metrics metrics;
+
+    //维护消费者的消费状态
     private final SubscriptionState subscriptions;
+    //记录整个kafka 的集群的元数据
     private final Metadata metadata;
+
     private final long retryBackoffMs;
     private final long requestTimeoutMs;
     private boolean closed = false;
 
+
     // currentThread holds the threadId of the current thread accessing KafkaConsumer
     // and is used to prevent multi-threaded access
+    //线程ID
     private final AtomicLong currentThread = new AtomicLong(NO_CURRENT_THREAD);
+
+    //重入次数
     // refcount is used to allow reentrant access by the thread who has acquired currentThread
     private final AtomicInteger refcount = new AtomicInteger(0);
+
+
+    /**
+     * 轻量级锁
+     * Acquire the light lock protecting this consumer from multi-threaded access. Instead of blocking
+     * when the lock is not available, however, we just throw an exception (since multi-threaded usage is not
+     * supported).
+     * @throws IllegalStateException if the consumer has been closed
+     * @throws ConcurrentModificationException if another thread already has the lock
+     */
+    private void acquire() {
+        ensureNotClosed();
+        long threadId = Thread.currentThread().getId();
+        if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId))
+            throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
+        refcount.incrementAndGet();
+    }
+
+    /**轻量级锁
+     * Release the light lock protecting the consumer from multi-threaded access.
+     */
+    private void release() {
+        if (refcount.decrementAndGet() == 0)
+            currentThread.set(NO_CURRENT_THREAD);
+    }
+
+
 
     /**
      * A consumer is instantiated by providing a set of key-value pairs as configuration. Valid configuration strings
@@ -1413,26 +1459,5 @@ public class KafkaConsumer<K, V> implements Consumer<K, V> {
             throw new IllegalStateException("This consumer has already been closed.");
     }
 
-    /**
-     * Acquire the light lock protecting this consumer from multi-threaded access. Instead of blocking
-     * when the lock is not available, however, we just throw an exception (since multi-threaded usage is not
-     * supported).
-     * @throws IllegalStateException if the consumer has been closed
-     * @throws ConcurrentModificationException if another thread already has the lock
-     */
-    private void acquire() {
-        ensureNotClosed();
-        long threadId = Thread.currentThread().getId();
-        if (threadId != currentThread.get() && !currentThread.compareAndSet(NO_CURRENT_THREAD, threadId))
-            throw new ConcurrentModificationException("KafkaConsumer is not safe for multi-threaded access");
-        refcount.incrementAndGet();
-    }
 
-    /**
-     * Release the light lock protecting the consumer from multi-threaded access.
-     */
-    private void release() {
-        if (refcount.decrementAndGet() == 0)
-            currentThread.set(NO_CURRENT_THREAD);
-    }
 }

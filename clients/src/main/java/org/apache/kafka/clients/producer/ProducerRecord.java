@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- * 
- * http://www.apache.org/licenses/LICENSE-2.0
- * 
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.clients.producer;
 
 /**
@@ -46,7 +34,7 @@ public final class ProducerRecord<K, V> {
 
     /**
      * Creates a record with a specified timestamp to be sent to a specified topic and partition
-     * 
+     *
      * @param topic The topic the record will be appended to
      * @param partition The partition to which the record should be sent
      * @param timestamp The timestamp of the record
@@ -79,7 +67,7 @@ public final class ProducerRecord<K, V> {
 
     /**
      * Create a record to be sent to Kafka
-     * 
+     *
      * @param topic The topic the record will be appended to
      * @param key The key that will be included in the record
      * @param value The record contents
@@ -90,7 +78,7 @@ public final class ProducerRecord<K, V> {
 
     /**
      * Create a record with no key
-     * 
+     *
      * @param topic The topic this record should be sent to
      * @param value The record contents
      */
@@ -151,13 +139,13 @@ public final class ProducerRecord<K, V> {
 
         ProducerRecord<?, ?> that = (ProducerRecord<?, ?>) o;
 
-        if (key != null ? !key.equals(that.key) : that.key != null) 
+        if (key != null ? !key.equals(that.key) : that.key != null)
             return false;
-        else if (partition != null ? !partition.equals(that.partition) : that.partition != null) 
+        else if (partition != null ? !partition.equals(that.partition) : that.partition != null)
             return false;
-        else if (topic != null ? !topic.equals(that.topic) : that.topic != null) 
+        else if (topic != null ? !topic.equals(that.topic) : that.topic != null)
             return false;
-        else if (value != null ? !value.equals(that.value) : that.value != null) 
+        else if (value != null ? !value.equals(that.value) : that.value != null)
             return false;
         else if (timestamp != null ? !timestamp.equals(that.timestamp) : that.timestamp != null)
             return false;

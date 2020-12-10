@@ -51,6 +51,8 @@ import org.slf4j.LoggerFactory;
 
 
 /**
+ *
+ * 线程安全
  * A Kafka client that publishes records to the Kafka cluster.
  * <P>
  * The producer is <i>thread safe</i> and sharing a single producer instance across threads will generally be faster than
@@ -121,22 +123,36 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
     private static final String JMX_PREFIX = "kafka.producer";
 
     private String clientId;
+
+    //为消息选择合适的partition
     private final Partitioner partitioner;
     private final int maxRequestSize;
     private final long totalMemorySize;
+
+    //集群元数据
     private final Metadata metadata;
+
+    //收集消息实现批量生产
     private final RecordAccumulator accumulator;
+
+    //Sender 这个本质是runnable 任务 实现发送任务从accumulator获取消息
     private final Sender sender;
     private final Metrics metrics;
     private final Thread ioThread;
     private final CompressionType compressionType;
     private final Sensor errors;
     private final Time time;
+
+    //序列化机制
     private final Serializer<K> keySerializer;
     private final Serializer<V> valueSerializer;
+
+
     private final ProducerConfig producerConfig;
     private final long maxBlockTimeMs;
     private final int requestTimeoutMs;
+
+    //对消息进行拦截
     private final ProducerInterceptors<K, V> interceptors;
 
     /**
@@ -190,6 +206,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
              keySerializer, valueSerializer);
     }
 
+    /**
+     * kafka 的构造函数 在这个方法里面会进行一些初始化的工作
+     * @param config
+     * @param keySerializer
+     * @param valueSerializer
+     */
     @SuppressWarnings({"unchecked", "deprecation"})
     private KafkaProducer(ProducerConfig config, Serializer<K> keySerializer, Serializer<V> valueSerializer) {
         try {
@@ -210,9 +232,14 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     MetricsReporter.class);
             reporters.add(new JmxReporter(JMX_PREFIX));
             this.metrics = new Metrics(metricConfig, reporters, time);
+
+            //todo这里很奇怪为什么用反射？
             this.partitioner = config.getConfiguredInstance(ProducerConfig.PARTITIONER_CLASS_CONFIG, Partitioner.class);
             long retryBackoffMs = config.getLong(ProducerConfig.RETRY_BACKOFF_MS_CONFIG);
+
+
             this.metadata = new Metadata(retryBackoffMs, config.getLong(ProducerConfig.METADATA_MAX_AGE_CONFIG));
+
             this.maxRequestSize = config.getInt(ProducerConfig.MAX_REQUEST_SIZE_CONFIG);
             this.totalMemorySize = config.getLong(ProducerConfig.BUFFER_MEMORY_CONFIG);
             this.compressionType = CompressionType.forName(config.getString(ProducerConfig.COMPRESSION_TYPE_CONFIG));
@@ -253,7 +280,8 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                 this.requestTimeoutMs = config.getInt(ProducerConfig.REQUEST_TIMEOUT_MS_CONFIG);
             }
 
-            this.accumulator = new RecordAccumulator(config.getInt(ProducerConfig.BATCH_SIZE_CONFIG),
+            //创建信息收集器
+            this.accumulator = new RecordAccumulator(config.getInt(ProducerConfig.BATCH_SIZE_CONFIG), //指定accumulator的大小 单位是字节
                     this.totalMemorySize,
                     this.compressionType,
                     config.getLong(ProducerConfig.LINGER_MS_CONFIG),
@@ -263,6 +291,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             List<InetSocketAddress> addresses = ClientUtils.parseAndValidateAddresses(config.getList(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG));
             this.metadata.update(Cluster.bootstrap(addresses), time.milliseconds());
             ChannelBuilder channelBuilder = ClientUtils.createChannelBuilder(config.values());
+
+
+            //网络IO的核心
             NetworkClient client = new NetworkClient(
                     new Selector(config.getLong(ProducerConfig.CONNECTIONS_MAX_IDLE_MS_CONFIG), this.metrics, time, "producer", channelBuilder),
                     this.metadata,
@@ -272,6 +303,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     config.getInt(ProducerConfig.SEND_BUFFER_CONFIG),
                     config.getInt(ProducerConfig.RECEIVE_BUFFER_CONFIG),
                     this.requestTimeoutMs, time);
+
+
+            //创建工作任务
             this.sender = new Sender(client,
                     this.metadata,
                     this.accumulator,
@@ -284,6 +318,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                     clientId,
                     this.requestTimeoutMs);
             String ioThreadName = "kafka-producer-network-thread" + (clientId.length() > 0 ? " | " + clientId : "");
+
+
+            //创建线程 并且启动
             this.ioThread = new KafkaThread(ioThreadName, this.sender, true);
             this.ioThread.start();
 
@@ -426,8 +463,14 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
         TopicPartition tp = null;
         try {
             // first make sure the metadata for the topic is available
+            //获取kafka集群的信息 底层会进行唤醒Send线程更新Metadata中保存的kafka集群信息
+            //todo
+            System.out.println("=========获取kafka集群的信息 底层会进行唤醒Send线程更新Metadata中保存的kafka集群信息============");
             long waitedOnMetadataMs = waitOnMetadata(record.topic(), this.maxBlockTimeMs);
+
             long remainingWaitMs = Math.max(0, this.maxBlockTimeMs - waitedOnMetadataMs);
+
+            // 序列化机制
             byte[] serializedKey;
             try {
                 serializedKey = keySerializer.serialize(record.topic(), record.key());
@@ -444,6 +487,9 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
                         " to class " + producerConfig.getClass(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG).getName() +
                         " specified in value.serializer");
             }
+
+
+            // 选择合适的分区
             int partition = partition(record, serializedKey, serializedValue, metadata.fetch());
             int serializedSize = Records.LOG_OVERHEAD + Record.recordSize(serializedKey, serializedValue);
             ensureValidRecordSize(serializedSize);
@@ -452,9 +498,15 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             log.trace("Sending record {} with callback {} to topic {} partition {}", record, callback, record.topic(), partition);
             // producer callback will make sure to call both 'callback' and interceptor callback
             Callback interceptCallback = this.interceptors == null ? callback : new InterceptorCallback<>(callback, this.interceptors, tp);
+
+            //消息进行追加
             RecordAccumulator.RecordAppendResult result = accumulator.append(tp, timestamp, serializedKey, serializedValue, interceptCallback, remainingWaitMs);
+            //这里的future模式是怎么使用的
+            //这里判断是否唤醒发送Sender线程
+            //条件是 消息队列最后一个RecordBatch 满了 或者队列中 不止有一个RecordBatch
             if (result.batchIsFull || result.newBatchCreated) {
                 log.trace("Waking up the sender since topic {} partition {} is either full or getting a new batch", record.topic(), partition);
+                 //唤醒线程？？刚才不是唤醒过了吗
                 this.sender.wakeup();
             }
             return result.future;
@@ -501,11 +553,13 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
      */
     private long waitOnMetadata(String topic, long maxWaitMs) throws InterruptedException {
         // add topic to metadata topic list if it is not there already.
-        if (!this.metadata.containsTopic(topic))
+        if (!this.metadata.containsTopic(topic)) {
             this.metadata.add(topic);
+        }
 
-        if (metadata.fetch().partitionsForTopic(topic) != null)
+        if (metadata.fetch().partitionsForTopic(topic) != null) {
             return 0;
+        }
 
         long begin = time.milliseconds();
         long remainingWaitMs = maxWaitMs;
@@ -515,10 +569,12 @@ public class KafkaProducer<K, V> implements Producer<K, V> {
             sender.wakeup();
             metadata.awaitUpdate(version, remainingWaitMs);
             long elapsed = time.milliseconds() - begin;
-            if (elapsed >= maxWaitMs)
+            if (elapsed >= maxWaitMs) {
                 throw new TimeoutException("Failed to update metadata after " + maxWaitMs + " ms.");
-            if (metadata.fetch().unauthorizedTopics().contains(topic))
+            }
+            if (metadata.fetch().unauthorizedTopics().contains(topic)) {
                 throw new TopicAuthorizationException(topic);
+            }
             remainingWaitMs = maxWaitMs - elapsed;
         }
         return time.milliseconds() - begin;

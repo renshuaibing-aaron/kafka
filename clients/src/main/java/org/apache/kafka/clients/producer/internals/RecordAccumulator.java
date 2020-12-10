@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- * 
- * http://www.apache.org/licenses/LICENSE-2.0
- * 
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.clients.producer.internals;
 
 import java.util.Iterator;
@@ -49,6 +37,8 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
+ *
+ *消息记录累加器 因为这个类至少被一个业务线程和send线程并发操作 所以必须是线程安全的
  * This class acts as a queue that accumulates records into {@link org.apache.kafka.common.record.MemoryRecords}
  * instances to be sent to the server.
  * <p>
@@ -61,22 +51,33 @@ public final class RecordAccumulator {
 
     private volatile boolean closed;
     private final AtomicInteger flushesInProgress;
+    //添加线程数量
     private final AtomicInteger appendsInProgress;
+
+    //指定RecordBatch底层ByteBuffer的大小
     private final int batchSize;
+    //压缩类型
     private final CompressionType compression;
     private final long lingerMs;
     private final long retryBackoffMs;
+
     private final BufferPool free;
     private final Time time;
+
+    //消息的缓存  key是分片信息 value是消息队列 这里注意是怎么保证线程安全的？？
     private final ConcurrentMap<TopicPartition, Deque<RecordBatch>> batches;
+
+    //未发送的完成的RecordBatch集合
     private final IncompleteRecordBatches incomplete;
     // The following variables are only accessed by the sender thread, so we don't need to protect them.
     private final Set<TopicPartition> muted;
+
+    //使用drain方法批量导出RecordBatch时 为了防止饥饿 用drainIndex记录上次发送停止的位置 下次继续从此位置开始发送
     private int drainIndex;
 
     /**
      * Create a new record accumulator
-     * 
+     *
      * @param batchSize The size to use when allocating {@link org.apache.kafka.common.record.MemoryRecords} instances
      * @param totalSize The maximum memory the record accumulator can use.
      * @param compression The compression codec for the records
@@ -163,38 +164,51 @@ public final class RecordAccumulator {
                                      long maxTimeToBlock) throws InterruptedException {
         // We keep track of the number of appending thread to make sure we do not miss batches in
         // abortIncompleteBatches().
+        //增加线程
         appendsInProgress.incrementAndGet();
         try {
             // check if we have an in-progress batch
+            //查找或者创建一个Deque<RecordBatch> 根据tp
             Deque<RecordBatch> dq = getOrCreateDeque(tp);
             synchronized (dq) {
-                if (closed)
+                if (closed) {
                     throw new IllegalStateException("Cannot send after the producer is closed.");
+                }
+                //注意这个里面返回的RecordAppendResult 其中封装了ProduceRequestResult
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
-                if (appendResult != null)
+                if (appendResult != null) {
                     return appendResult;
+                }
             }
 
             // we don't have an in-progress record batch try to allocate a new batch
             int size = Math.max(this.batchSize, Records.LOG_OVERHEAD + Record.recordSize(key, value));
             log.trace("Allocating a new {} byte message buffer for topic {} partition {}", size, tp.topic(), tp.partition());
+            log.trace("申请一个新的 {} 字节 消息 buffer for topic {} 分区 {}", size, tp.topic(), tp.partition());
+            // 追加失败 重新申请内存ByteBuffer
             ByteBuffer buffer = free.allocate(size, maxTimeToBlock);
             synchronized (dq) {
                 // Need to check if producer is closed again after grabbing the dequeue lock.
-                if (closed)
+                if (closed) {
                     throw new IllegalStateException("Cannot send after the producer is closed.");
+                }
 
+                //内存的分配问题
                 RecordAppendResult appendResult = tryAppend(timestamp, key, value, callback, dq);
                 if (appendResult != null) {
                     // Somebody else found us a batch, return the one we waited for! Hopefully this doesn't happen often...
                     free.deallocate(buffer);
+                    //这里为什么要释放呢？
                     return appendResult;
                 }
+                //继续追加失败
+                //todo   这里怎么消除内存碎片问题
                 MemoryRecords records = MemoryRecords.emptyRecords(buffer, compression, this.batchSize);
                 RecordBatch batch = new RecordBatch(tp, records, time.milliseconds());
                 FutureRecordMetadata future = Utils.notNull(batch.tryAppend(timestamp, key, value, callback, time.milliseconds()));
 
                 dq.addLast(batch);
+                //将消息追加到incomplete集合 这里考虑为什么会发送失败
                 incomplete.add(batch);
                 return new RecordAppendResult(future, dq.size() > 1 || batch.records.isFull(), true);
             }
@@ -211,10 +225,11 @@ public final class RecordAccumulator {
         RecordBatch last = deque.peekLast();
         if (last != null) {
             FutureRecordMetadata future = last.tryAppend(timestamp, key, value, callback, time.milliseconds());
-            if (future == null)
+            if (future == null) {
                 last.records.close();
-            else
+            } else {
                 return new RecordAppendResult(future, deque.size() > 1 || last.records.isFull(), false);
+            }
         }
         return null;
     }
@@ -295,28 +310,34 @@ public final class RecordAccumulator {
      *     <li>The accumulator has been closed</li>
      * </ul>
      * </ol>
+     * 判断是不是准备发送了
      */
     public ReadyCheckResult ready(Cluster cluster, long nowMs) {
-        Set<Node> readyNodes = new HashSet<>();
-        long nextReadyCheckDelayMs = Long.MAX_VALUE;
-        boolean unknownLeadersExist = false;
+        Set<Node> readyNodes = new HashSet<>();  //用来记录那些节点可以可以发送消息了
+        long nextReadyCheckDelayMs = Long.MAX_VALUE; //记录下次调用ready方法的时间间隔
+        boolean unknownLeadersExist = false; //根据集群元数据 是否有找不到leader的分区
 
-        boolean exhausted = this.free.queued() > 0;
+        boolean exhausted = this.free.queued() > 0; //是否有线程在阻塞等待BufferPool释放空间
+
         for (Map.Entry<TopicPartition, Deque<RecordBatch>> entry : this.batches.entrySet()) {
             TopicPartition part = entry.getKey();
             Deque<RecordBatch> deque = entry.getValue();
 
             Node leader = cluster.leaderFor(part);
             if (leader == null) {
+                //没有找到leader的副本分区 标记为true  以后会触发集群元数据的更新
                 unknownLeadersExist = true;
             } else if (!readyNodes.contains(leader) && !muted.contains(part)) {
                 synchronized (deque) {
+                    //获取第一个RecordBatch
                     RecordBatch batch = deque.peekFirst();
                     if (batch != null) {
                         boolean backingOff = batch.attempts > 0 && batch.lastAttemptMs + retryBackoffMs > nowMs;
                         long waitedTimeMs = nowMs - batch.lastAttemptMs;
                         long timeToWaitMs = backingOff ? retryBackoffMs : lingerMs;
                         long timeLeftMs = Math.max(timeToWaitMs - waitedTimeMs, 0);
+
+                        //Node筛选的条件
                         boolean full = deque.size() > 1 || batch.records.isFull();
                         boolean expired = waitedTimeMs >= timeToWaitMs;
                         boolean sendable = full || expired || exhausted || closed || flushInProgress();
@@ -353,19 +374,21 @@ public final class RecordAccumulator {
     /**
      * Drain all the data for the given nodes and collate them into a list of batches that will fit within the specified
      * size on a per-node basis. This method attempts to avoid choosing the same topic-node over and over.
-     * 
+     *
      * @param cluster The current cluster metadata
      * @param nodes The list of node to drain
      * @param maxSize The maximum number of bytes to drain
      * @param now The current unix time in milliseconds
      * @return A list of {@link RecordBatch} for each node specified with total size less than the requested maxSize.
+     * 获取待发送的消息集合
      */
     public Map<Integer, List<RecordBatch>> drain(Cluster cluster,
                                                  Set<Node> nodes,
                                                  int maxSize,
                                                  long now) {
-        if (nodes.isEmpty())
+        if (nodes.isEmpty()) {
             return Collections.emptyMap();
+        }
 
         Map<Integer, List<RecordBatch>> batches = new HashMap<>();
         for (Node node : nodes) {
@@ -383,6 +406,7 @@ public final class RecordAccumulator {
                     if (deque != null) {
                         synchronized (deque) {
                             RecordBatch first = deque.peekFirst();
+                            System.out.println("=====first===="+first);
                             if (first != null) {
                                 boolean backoff = first.attempts > 0 && first.lastAttemptMs + retryBackoffMs > now;
                                 // Only drain the batch if it is not during backoff period.
@@ -408,6 +432,8 @@ public final class RecordAccumulator {
             } while (start != drainIndex);
             batches.put(node.id(), ready);
         }
+        System.out.println("=====batches===="+batches.size());
+        System.out.println("=====batches=2==="+batches);
         return batches;
     }
 
@@ -420,14 +446,16 @@ public final class RecordAccumulator {
      */
     private Deque<RecordBatch> getOrCreateDeque(TopicPartition tp) {
         Deque<RecordBatch> d = this.batches.get(tp);
-        if (d != null)
+        if (d != null) {
             return d;
+        }
         d = new ArrayDeque<>();
         Deque<RecordBatch> previous = this.batches.putIfAbsent(tp, d);
-        if (previous == null)
+        if (previous == null) {
             return d;
-        else
+        } else {
             return previous;
+        }
     }
 
     /**
@@ -437,7 +465,7 @@ public final class RecordAccumulator {
         incomplete.remove(batch);
         free.deallocate(batch.records.buffer(), batch.records.initialCapacity());
     }
-    
+
     /**
      * Are there any threads currently waiting on a flush?
      *
@@ -451,7 +479,7 @@ public final class RecordAccumulator {
     Map<TopicPartition, Deque<RecordBatch>> batches() {
         return Collections.unmodifiableMap(batches);
     }
-    
+
     /**
      * Initiate the flushing of data from the accumulator...this makes all requests immediately ready
      */
@@ -557,7 +585,7 @@ public final class RecordAccumulator {
             this.unknownLeadersExist = unknownLeadersExist;
         }
     }
-    
+
     /*
      * A threadsafe helper class to hold RecordBatches that haven't been ack'd yet
      */
@@ -567,13 +595,13 @@ public final class RecordAccumulator {
         public IncompleteRecordBatches() {
             this.incomplete = new HashSet<RecordBatch>();
         }
-        
+
         public void add(RecordBatch batch) {
             synchronized (incomplete) {
                 this.incomplete.add(batch);
             }
         }
-        
+
         public void remove(RecordBatch batch) {
             synchronized (incomplete) {
                 boolean removed = this.incomplete.remove(batch);
@@ -581,7 +609,7 @@ public final class RecordAccumulator {
                     throw new IllegalStateException("Remove from the incomplete set failed. This should be impossible.");
             }
         }
-        
+
         public Iterable<RecordBatch> all() {
             synchronized (incomplete) {
                 return new ArrayList<>(this.incomplete);

@@ -1,19 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.kafka.common.record;
 
 import java.lang.reflect.Constructor;
@@ -82,8 +66,11 @@ public class Compressor {
     });
 
     private final CompressionType type;
+
+    //两种输出流字段
     private final DataOutputStream appendStream;
     private final ByteBufferOutputStream bufferStream;
+
     private final int initPos;
 
     public long writtenUncompressed;
@@ -92,6 +79,7 @@ public class Compressor {
     public long maxTimestamp;
 
     public Compressor(ByteBuffer buffer, CompressionType type) {
+        //从生产者配置项里获取的压缩类型
         this.type = type;
         this.initPos = buffer.position();
 
@@ -106,7 +94,7 @@ public class Compressor {
             buffer.position(initPos + Records.LOG_OVERHEAD + Record.RECORD_OVERHEAD);
         }
 
-        // create the stream
+        // create the stream 根据压缩类型获取合适的输出流
         bufferStream = new ByteBufferOutputStream(buffer);
         appendStream = wrapForOutput(bufferStream, type, COMPRESSION_DEFAULT_BUFFER_SIZE);
     }
@@ -244,13 +232,15 @@ public class Compressor {
 
     public static DataOutputStream wrapForOutput(ByteBufferOutputStream buffer, CompressionType type, int bufferSize) {
         try {
-            switch (type) {
-                case NONE:
+            switch (type) {  //根据不同的类型创建不同的压缩流
+                case NONE:  //不压缩
                     return new DataOutputStream(buffer);
-                case GZIP:
+                case GZIP:   //使用GZIP压缩
                     return new DataOutputStream(new GZIPOutputStream(buffer, bufferSize));
                 case SNAPPY:
                     try {
+                        //使用反射方式创建 因为GZIPOutputStream是JDK自带的包
+                        //SNAPPY  需要引入其他的依赖 为了保证减少最少依赖  利用反射 只有需要的时候才进行
                         OutputStream stream = (OutputStream) snappyOutputStreamSupplier.get().newInstance(buffer, bufferSize);
                         return new DataOutputStream(stream);
                     } catch (Exception e) {

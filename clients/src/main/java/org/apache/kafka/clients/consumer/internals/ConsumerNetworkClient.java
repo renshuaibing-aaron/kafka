@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.ClientRequest;
@@ -45,17 +33,36 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class ConsumerNetworkClient implements Closeable {
     private static final Logger log = LoggerFactory.getLogger(ConsumerNetworkClient.class);
 
+    //核心东西 ConsumerNetworkClient对这个NetworkClient进行了包装
     private final KafkaClient client;
+
+
+    //由消费线程之外的线程进行设置 表示要中断Kafkaconsumer的消费线程
     private final AtomicBoolean wakeup = new AtomicBoolean(false);
+
+    // this count is only accessed from the consumer's main thread
+    //用来判断kafkaconsumer是否正在执行一个不可中断的方法 每次进入一个不可中断的方法加1 退出减少1
+    //注意这个对象只能被消费自身的线程修改 其他线程不能被修改
+    private int wakeupDisabledCount = 0;
+
+
+
+    //定时任务队列 底层是用的JDK的PriorityQueue实现(线程非安全 无界优先级 队列小顶堆 数组)  在kafka里面主要是实现心跳任务
     private final DelayedTaskQueue delayedTasks = new DelayedTaskQueue();
+
+    //缓冲队列  key 是node节点  value List<ClientRequest>
     private final Map<Node, List<ClientRequest>> unsent = new HashMap<>();
+    //ClientRequest在缓存中额超时时间设置
+    private final long unsentExpiryMs;
+
+    //kafka集群元数据
     private final Metadata metadata;
     private final Time time;
     private final long retryBackoffMs;
-    private final long unsentExpiryMs;
 
-    // this count is only accessed from the consumer's main thread
-    private int wakeupDisabledCount = 0;
+
+
+
 
 
     public ConsumerNetworkClient(KafkaClient client,
@@ -108,6 +115,7 @@ public class ConsumerNetworkClient implements Closeable {
         RequestFutureCompletionHandler future = new RequestFutureCompletionHandler();
         RequestHeader header = client.nextRequestHeader(api);
         RequestSend send = new RequestSend(node.idString(), header, request.toStruct());
+        //创建ClientRequest对象 并保存到unsent集合中
         put(node, new ClientRequest(now, true, send, future));
         return future;
     }
@@ -214,30 +222,46 @@ public class ConsumerNetworkClient implements Closeable {
         }
     }
 
+    /**
+     *
+     * @param timeout 阻塞的最长时间
+     * @param now  现在的时间
+     * @param executeDelayedTasks 是否需要执行定时任务
+     */
     private void poll(long timeout, long now, boolean executeDelayedTasks) {
+
+         //
         // send all the requests we can send now
         trySend(now);
 
+        //计算超时时间 这里取定时任务的下次执行时间和超时时间决定 取最小值 避免影响定时任务执行
         // ensure we don't poll any longer than the deadline for
         // the next scheduled task
         timeout = Math.min(timeout, delayedTasks.nextTimeout(now));
+
+        //拉取消息 主要作用是将kafkachannel.send 字段发送出去
         clientPoll(timeout, now);
         now = time.milliseconds();
 
         // handle any disconnects by failing the active requests. note that disconnects must
         // be checked immediately following poll since any subsequent call to client.ready()
         // will reset the disconnect status
+        //检测连接状态检测消费者 和每个node节点之间来连接状态 当连接断开的时候 会进行消除unsent中的请求 并且会进行回调
         checkDisconnects(now);
 
         // execute scheduled tasks
-        if (executeDelayedTasks)
+        //根据参数决定是否处理延时队列里面超时的定时任务
+        if (executeDelayedTasks) {
             delayedTasks.poll(now);
+        }
 
         // try again to send requests since buffer space may have been
         // cleared or a connect finished in the poll
+        // 再次调用 ？
         trySend(now);
 
         // fail requests that couldn't be sent if they have expired
+        //处理unsent中的超时请求 遍历unsent集合 检测每个请求是否超时 调用超时的函数 然后删除
         failExpiredRequests(now);
     }
 
@@ -284,6 +308,10 @@ public class ConsumerNetworkClient implements Closeable {
         return total + client.inFlightRequestCount();
     }
 
+    /**
+     * 检测连接状态 检测消费者和每个Node之间的连接状态
+     * @param now
+     */
     private void checkDisconnects(long now) {
         // any disconnects affecting requests that have already been transmitted will be handled
         // by NetworkClient, so we just need to check whether connections for any of the unsent
@@ -338,16 +366,28 @@ public class ConsumerNetworkClient implements Closeable {
         }
     }
 
+    /**
+     *针对每个node节点遍历其中的clientrequest 检查是否可以发送 然后进行发送（） 然后在列表里面进行删除
+     * @param now
+     * @return
+     */
     private boolean trySend(long now) {
         // send any requests that can be sent now
         boolean requestsSent = false;
+
+        //遍历unsent集合
         for (Map.Entry<Node, List<ClientRequest>> requestEntry: unsent.entrySet()) {
             Node node = requestEntry.getKey();
             Iterator<ClientRequest> iterator = requestEntry.getValue().iterator();
             while (iterator.hasNext()) {
                 ClientRequest request = iterator.next();
+
+                //检测是否可以发送请求
                 if (client.ready(node, now)) {
+                    //可以发送 进行发送消息   等待发送请求
                     client.send(request, now);
+
+                    //从unsent集合里面删除请求
                     iterator.remove();
                     requestsSent = true;
                 }
@@ -358,6 +398,7 @@ public class ConsumerNetworkClient implements Closeable {
 
     private void clientPoll(long timeout, long now) {
         client.poll(timeout, now);
+        //检查是否需要中断
         maybeTriggerWakeup();
     }
 

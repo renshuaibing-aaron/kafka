@@ -1,19 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more
- * contributor license agreements.  See the NOTICE file distributed with
- * this work for additional information regarding copyright ownership.
- * The ASF licenses this file to You under the Apache License, Version 2.0
- * (the "License"); you may not use this file except in compliance with
- * the License.  You may obtain a copy of the License at
- *
- *    http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
 package org.apache.kafka.clients.producer.internals;
 
 import java.nio.ByteBuffer;
@@ -55,7 +39,7 @@ public final class BufferPool {
 
     /**
      * Create a new buffer pool
-     * 
+     *
      * @param memory The maximum amount of memory that this buffer pool can allocate
      * @param poolableSize The buffer size to cache in the free list rather than deallocating
      * @param metrics instance of Metrics
@@ -81,7 +65,7 @@ public final class BufferPool {
     /**
      * Allocate a buffer of the given size. This method blocks if there is not enough memory and the buffer pool
      * is configured with blocking mode.
-     * 
+     *
      * @param size The buffer size to allocate in bytes
      * @param maxTimeToBlockMs The maximum time in milliseconds to block for buffer memory to be available
      * @return The buffer
@@ -90,17 +74,19 @@ public final class BufferPool {
      *         forever)
      */
     public ByteBuffer allocate(int size, long maxTimeToBlockMs) throws InterruptedException {
-        if (size > this.totalMemory)
+        if (size > this.totalMemory) {
             throw new IllegalArgumentException("Attempt to allocate " + size
                                                + " bytes, but there is a hard limit of "
                                                + this.totalMemory
                                                + " on memory allocations.");
+        }
 
         this.lock.lock();
         try {
             // check if we have a free buffer of the right size pooled
-            if (size == poolableSize && !this.free.isEmpty())
+            if (size == poolableSize && !this.free.isEmpty()) {
                 return this.free.pollFirst();
+            }
 
             // now check if the request is immediately satisfiable with the
             // memory on hand or if we need to block
@@ -161,26 +147,30 @@ public final class BufferPool {
                 // remove the condition for this thread to let the next thread
                 // in line start getting memory
                 Condition removed = this.waiters.removeFirst();
-                if (removed != moreMemory)
+                if (removed != moreMemory) {
                     throw new IllegalStateException("Wrong condition: this shouldn't happen.");
+                }
 
                 // signal any additional waiters if there is more memory left
                 // over for them
                 if (this.availableMemory > 0 || !this.free.isEmpty()) {
-                    if (!this.waiters.isEmpty())
+                    if (!this.waiters.isEmpty()) {
                         this.waiters.peekFirst().signal();
+                    }
                 }
 
                 // unlock and return the buffer
                 lock.unlock();
-                if (buffer == null)
+                if (buffer == null) {
                     return ByteBuffer.allocate(size);
-                else
+                } else {
                     return buffer;
+                }
             }
         } finally {
-            if (lock.isHeldByCurrentThread())
+            if (lock.isHeldByCurrentThread()) {
                 lock.unlock();
+            }
         }
     }
 
@@ -196,7 +186,7 @@ public final class BufferPool {
     /**
      * Return buffers to the pool. If they are of the poolable size add them to the free list, otherwise just mark the
      * memory as free.
-     * 
+     *
      * @param buffer The buffer to return
      * @param size The size of the buffer to mark as deallocated, note that this maybe smaller than buffer.capacity
      *             since the buffer may re-allocate itself during in-place compression

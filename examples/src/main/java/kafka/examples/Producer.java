@@ -7,6 +7,7 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 
 import java.util.Properties;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 public class Producer extends Thread {
     private final KafkaProducer<Integer, String> producer;
@@ -15,11 +16,11 @@ public class Producer extends Thread {
 
     public Producer(String topic, Boolean isAsync) {
         Properties props = new Properties();
-        props.put("bootstrap.servers", "localhost:9092");
-        props.put("client.id", "DemoProducer");
-        props.put("key.serializer", "org.apache.kafka.common.serialization.IntegerSerializer");
-        props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");
-        producer = new KafkaProducer<>(props);
+        props.put("bootstrap.servers", "localhost:9090"); //kafka 服务端的主机名和端口号
+        props.put("client.id", "DemoProducer"); //客户端ID
+        props.put("key.serializer", "org.apache.kafka.common.serialization.IntegerSerializer"); //  序列化器
+        props.put("value.serializer", "org.apache.kafka.common.serialization.StringSerializer");//序列化器
+        producer = new KafkaProducer<>(props); //核心类
         this.topic = topic;
         this.isAsync = isAsync;
     }
@@ -27,19 +28,26 @@ public class Producer extends Thread {
     @Override
     public void run() {
         int messageNo = 1;
-        while (messageNo<=20) {
+        while (messageNo<=100) {
             String messageStr = "Message_" + messageNo;
             long startTime = System.currentTimeMillis();
-            if (isAsync) { // Send asynchronously
-                producer.send(new ProducerRecord<>(topic,
-                    messageNo,
-                    messageStr), new DemoCallBack(startTime, messageNo, messageStr));
+
+
+            if (isAsync) {
+                 //异步发送
+                ProducerRecord<Integer, String> producerRecord = new ProducerRecord<>(topic, messageNo, messageStr);
+                // Send asynchronously
+                Future<RecordMetadata> send = producer.send(producerRecord, new DemoCallBack(startTime, messageNo, messageStr));
+
+
             } else { // Send synchronously
                 try {
-                    producer.send(new ProducerRecord<>(topic,
-                        messageNo,
-                        messageStr)).get();
+                    //同步发送
+                    ProducerRecord<Integer, String> producerRecord = new ProducerRecord<>(topic, messageNo, messageStr);
+                    Future<RecordMetadata> future = producer.send(producerRecord);
+                    RecordMetadata recordMetadata = future.get();
                     System.out.println("发送消息: (" + messageNo + ", " + messageStr + ")");
+                    System.out.println("recordMetadata"+recordMetadata);
                 } catch (InterruptedException | ExecutionException e) {
                     e.printStackTrace();
                 }
@@ -67,7 +75,7 @@ class DemoCallBack implements Callback {
      * non-null.
      *
      * @param metadata  The metadata for the record that was sent (i.e. the partition and offset). Null if an error
-     *                  occurred.
+     *                  occurred.  todo生产者发送消息的元数据 如果发送异常 参数为null
      * @param exception The exception thrown during processing of this record. Null if no error occurred.
      */
     @Override

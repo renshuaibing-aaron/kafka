@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.clients.consumer;
 
 import org.apache.kafka.common.Metric;
@@ -41,6 +29,7 @@ public interface Consumer<K, V> extends Closeable {
     public Set<String> subscription();
 
     /**
+     *订阅指定的topics 并且为消费者指定分区
      * @see KafkaConsumer#subscribe(Collection)
      */
     public void subscribe(Collection<String> topics);
@@ -52,6 +41,7 @@ public interface Consumer<K, V> extends Closeable {
 
     /**
      * @see KafkaConsumer#assign(Collection)
+     *用户手动指定topic并且指定分区 注意这个方法和subscribe互斥
      */
     public void assign(Collection<TopicPartition> partitions);
 
@@ -67,6 +57,7 @@ public interface Consumer<K, V> extends Closeable {
 
     /**
      * @see KafkaConsumer#poll(long)
+     * 拉取消息
      */
     public ConsumerRecords<K, V> poll(long timeout);
 
@@ -97,6 +88,7 @@ public interface Consumer<K, V> extends Closeable {
 
     /**
      * @see KafkaConsumer#seek(TopicPartition, long)
+     * 指定消费者的消费其实位置
      */
     public void seek(TopicPartition partition, long offset);
 
@@ -137,6 +129,7 @@ public interface Consumer<K, V> extends Closeable {
 
     /**
      * @see KafkaConsumer#paused()
+     * 暂停消费
      */
     public Set<TopicPartition> paused();
 
@@ -147,6 +140,7 @@ public interface Consumer<K, V> extends Closeable {
 
     /**
      * @see KafkaConsumer#resume(Collection)
+     * 继续消费
      */
     public void resume(Collection<TopicPartition> partitions);
 

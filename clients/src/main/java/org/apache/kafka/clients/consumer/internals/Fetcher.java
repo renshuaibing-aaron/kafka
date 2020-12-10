@@ -1,16 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
-
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.ClientResponse;
@@ -67,27 +54,49 @@ import java.util.Map;
 import java.util.Set;
 
 /**
+ *消息者从服务端拉取消息 获取指定的消息集合
  * This class manage the fetching process with the brokers.
  */
 public class Fetcher<K, V> {
 
     private static final Logger log = LoggerFactory.getLogger(Fetcher.class);
 
+    //负责网络通信
     private final ConsumerNetworkClient client;
     private final Time time;
+
+    //注意当服务端收到FetchRequest之后并不是立即响应  而是返回的消息积累到minBytes 之后才会进行返回
     private final int minBytes;
+
+    //等待的最长时间 服务端根据此时间决定何时间进行响应
     private final int maxWaitMs;
+
+    //fetch的最大字节数
     private final int fetchSize;
+
     private final long retryBackoffMs;
+
+    //获取record的最大数量
     private final int maxPollRecords;
     private final boolean checkCrcs;
+
+    //记录kafka的元数据
     private final Metadata metadata;
     private final FetchManagerMetrics sensors;
+
+    //记录每个TopicPartition的消费情况
     private final SubscriptionState subscriptions;
+
+
+    //缓存  每个FetchResponse会首先转换成CompletedFetch 进行缓存此时并没有解析消息
     private final List<CompletedFetch> completedFetches;
+
     private final Deserializer<K> keyDeserializer;
     private final Deserializer<V> valueDeserializer;
 
+
+
+    //PartitionRecords 类型
     private PartitionRecords<K, V> nextInLineRecords = null;
 
     public Fetcher(ConsumerNetworkClient client,
@@ -648,10 +657,15 @@ public class Fetcher<K, V> {
         }
     }
 
+    /**
+     * PartitionRecords保存了CompletedFetch解析后的结果集
+     * @param <K>
+     * @param <V>
+     */
     private static class PartitionRecords<K, V> {
-        private long fetchOffset;
-        private TopicPartition partition;
-        private List<ConsumerRecord<K, V>> records;
+        private long fetchOffset;  //第一个消息的offset
+        private TopicPartition partition; //对应的TopicPartition
+        private List<ConsumerRecord<K, V>> records; //消息集合
 
         public PartitionRecords(long fetchOffset, TopicPartition partition, List<ConsumerRecord<K, V>> records) {
             this.fetchOffset = fetchOffset;

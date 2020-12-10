@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.common.network;
 
 import java.io.IOException;
@@ -74,19 +62,29 @@ import org.slf4j.LoggerFactory;
  * various getters. These are reset by each call to <code>poll()</code>.
  *
  * This class is not thread safe!
+ *
+ * 这个类线程不安全使用一个单独的线程管理多条网络上的连接 读 写操作
  */
 public class Selector implements Selectable {
 
     private static final Logger log = LoggerFactory.getLogger(Selector.class);
 
+    //JDK 原生的selector
     private final java.nio.channels.Selector nioSelector;
+    //维护了NOdeId和KafkaChannel 之间的映射 保存了生产者客户端和服务端各个node之间网络
     private final Map<String, KafkaChannel> channels;
+
+    //记录已经完全发送出去的请求
     private final List<Send> completedSends;
+    //记录已经完全收到的请求
     private final List<NetworkReceive> completedReceives;
+
     private final Map<KafkaChannel, Deque<NetworkReceive>> stagedReceives;
     private final Set<SelectionKey> immediatelyConnectedKeys;
+
     private final List<String> disconnected;
     private final List<String> connected;
+
     private final List<String> failedSends;
     private final Time time;
     private final SelectorMetrics sensors;
@@ -151,17 +149,20 @@ public class Selector implements Selectable {
      */
     @Override
     public void connect(String id, InetSocketAddress address, int sendBufferSize, int receiveBufferSize) throws IOException {
-        if (this.channels.containsKey(id))
+        if (this.channels.containsKey(id)) {
             throw new IllegalStateException("There is already a connection for id " + id);
+        }
 
         SocketChannel socketChannel = SocketChannel.open();
         socketChannel.configureBlocking(false);
         Socket socket = socketChannel.socket();
         socket.setKeepAlive(true);
-        if (sendBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE)
+        if (sendBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE) {
             socket.setSendBufferSize(sendBufferSize);
-        if (receiveBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE)
+        }
+        if (receiveBufferSize != Selectable.USE_DEFAULT_BUFFER_SIZE) {
             socket.setReceiveBufferSize(receiveBufferSize);
+        }
         socket.setTcpNoDelay(true);
         boolean connected;
         try {
@@ -227,6 +228,7 @@ public class Selector implements Selectable {
      * Queue the given request for sending in the subsequent {@link #poll(long)} calls
      * @param send The request to send
      */
+    @Override
     public void send(Send send) {
         KafkaChannel channel = channelOrFail(send.destination());
         try {

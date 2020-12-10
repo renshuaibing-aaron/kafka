@@ -1,15 +1,3 @@
-/**
- * Licensed to the Apache Software Foundation (ASF) under one or more contributor license agreements. See the NOTICE
- * file distributed with this work for additional information regarding copyright ownership. The ASF licenses this file
- * to You under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the
- * License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on
- * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the
- * specific language governing permissions and limitations under the License.
- */
 package org.apache.kafka.clients.consumer.internals;
 
 import org.apache.kafka.clients.consumer.ConsumerRebalanceListener;
@@ -47,25 +35,40 @@ import java.util.regex.Pattern;
  */
 public class SubscriptionState {
 
+    /**
+     * 订阅Topic的模式
+     */
     private enum SubscriptionType {
-        NONE, AUTO_TOPICS, AUTO_PATTERN, USER_ASSIGNED
+        NONE,
+        AUTO_TOPICS,   //按照指定的Topic名字进行订阅 自动分配分区
+        AUTO_PATTERN,  //按照指定的正则表达式匹配Topic进行订阅自动分配分区
+        USER_ASSIGNED  //用户手动指定消费者消费的Topic以及分区编号
     }
 
-    /* the type of subscription */
+    /* the type of subscription */  //订阅的模式
     private SubscriptionType subscriptionType;
 
-    /* the pattern user has requested */
+    /* the pattern user has requested */  //正则表达式  在AUTO_PATTERN 生效
     private Pattern subscribedPattern;
 
     /* the list of topics the user has requested */
     private final Set<String> subscription;
 
+    /**
+     * 根据协议ConsumerGroup会选举一个Leader  并且该leader会记录所有消费者订阅的Topic  其他follower只会记录自己的topic
+     */
     /* the list of topics the group has subscribed to (set only for the leader on join group completion) */
     private final Set<String> groupSubscription;
 
+    /**
+     * 如果使用USER_ASSIGNED这个模式    这个集合记录分配给这个消费者的TopicPartition 集合
+     */
     /* the list of partitions the user has requested */
     private final Set<TopicPartition> userAssignment;
 
+    /**
+     * 无论使用什么模式 都使用这个记录每个TopicPartition的消费状态
+     */
     /* the list of partitions currently assigned */
     private final Map<TopicPartition, TopicPartitionState> assignment;
 
@@ -91,10 +94,13 @@ public class SubscriptionState {
      * @param type The given subscription type
      */
     private void setSubscriptionType(SubscriptionType type) {
-        if (this.subscriptionType == SubscriptionType.NONE)
+
+        //如果是none可以指定其他模式
+        if (this.subscriptionType == SubscriptionType.NONE) {
             this.subscriptionType = type;
-        else if (this.subscriptionType != type)
+        } else if (this.subscriptionType != type) {  //否则会报错
             throw new IllegalStateException(SUBSCRIPTION_EXCEPTION_MESSAGE);
+        }
     }
 
     public SubscriptionState(OffsetResetStrategy defaultResetStrategy) {
@@ -110,8 +116,9 @@ public class SubscriptionState {
     }
 
     public void subscribe(Collection<String> topics, ConsumerRebalanceListener listener) {
-        if (listener == null)
+        if (listener == null) {
             throw new IllegalArgumentException("RebalanceListener cannot be null");
+        }
 
         setSubscriptionType(SubscriptionType.AUTO_TOPICS);
 
@@ -378,10 +385,13 @@ public class SubscriptionState {
         return listener;
     }
 
+    /**
+     *表示的是TopicPartition的消费状态
+     */
     private static class TopicPartitionState {
-        private Long position; // last consumed position
-        private OffsetAndMetadata committed;  // last committed position
-        private boolean paused;  // whether this partition has been paused by the user
+        private Long position; // last consumed position  下一次获取消息的offset
+        private OffsetAndMetadata committed;  // last committed position  记录最近一次提交的offset
+        private boolean paused;  // whether this partition has been paused by the user  是否是暂停状态
         private OffsetResetStrategy resetStrategy;  // the strategy to use if the offset needs resetting
 
         public TopicPartitionState() {

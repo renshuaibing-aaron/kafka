@@ -136,12 +136,16 @@ public class Sender implements Runnable {
 
     /**
      * The main run loop for the sender thread
+     * 实际发送消息的线程run方法
      */
+    @Override
     public void run() {
         log.debug("Starting Kafka producer I/O thread.");
 
         // main loop, runs until close is called
         while (running) {
+
+            System.out.println("====== 四玄幻==========");
             try {
                 run(time.milliseconds());
             } catch (Exception e) {
@@ -182,15 +186,22 @@ public class Sender implements Runnable {
      *            The current POSIX time in milliseconds
      */
     void run(long now) {
+        //从metadata中获取kafka集群的元数据
         Cluster cluster = metadata.fetch();
+
+
         // get the list of partitions with data ready to send
+        //根据RecordAccumulator的实际缓存情况 选择可以向那些节点发送消息
         RecordAccumulator.ReadyCheckResult result = this.accumulator.ready(cluster, now);
 
         // if there are any partitions whose leaders are not known yet, force metadata update
-        if (result.unknownLeadersExist)
+        //更新集群信息
+        if (result.unknownLeadersExist) {
             this.metadata.requestUpdate();
+        }
 
         // remove any nodes we aren't ready to send to
+        //检查可以发送的节点网络是不是通
         Iterator<Node> iter = result.readyNodes.iterator();
         long notReadyTimeout = Long.MAX_VALUE;
         while (iter.hasNext()) {
@@ -202,6 +213,7 @@ public class Sender implements Runnable {
         }
 
         // create produce requests
+        //获取待发送消息的集合
         Map<Integer, List<RecordBatch>> batches = this.accumulator.drain(cluster,
                                                                          result.readyNodes,
                                                                          this.maxRequestSize,
@@ -209,18 +221,29 @@ public class Sender implements Runnable {
         if (guaranteeMessageOrder) {
             // Mute all the partitions drained
             for (List<RecordBatch> batchList : batches.values()) {
-                for (RecordBatch batch : batchList)
+                for (RecordBatch batch : batchList) {
                     this.accumulator.mutePartition(batch.topicPartition);
+                }
             }
         }
 
+        //处理超时消息的逻辑
         List<RecordBatch> expiredBatches = this.accumulator.abortExpiredBatches(this.requestTimeout, now);
+
+
         // update sensors
-        for (RecordBatch expiredBatch : expiredBatches)
+        for (RecordBatch expiredBatch : expiredBatches) {
             this.sensors.recordErrors(expiredBatch.topicPartition.topic(), expiredBatch.recordCount);
+        }
 
         sensors.updateProduceRequestMetrics(batches);
+
+        //把待发送的消息进行封装成ClientRequest
+        //todo  这里注意ClientRequest 是按照node区分的 也就是一个node只生成一个ClientRequest
         List<ClientRequest> requests = createProduceRequests(batches, now);
+
+
+
         // If we have any nodes that are ready to send + have sendable data, poll with 0 timeout so this can immediately
         // loop and try sending more data. Otherwise, the timeout is determined by nodes that have partitions with data
         // that isn't yet sendable (e.g. lingering, backing off). Note that this specifically does not include nodes
@@ -231,8 +254,10 @@ public class Sender implements Runnable {
             log.trace("Created {} produce requests: {}", requests.size(), requests);
             pollTimeout = 0;
         }
-        for (ClientRequest request : requests)
+        for (ClientRequest request : requests) {
+            //发送消息  这个和下面poll的区别是什么？
             client.send(request, now);
+        }
 
         // if some partitions are already ready to be sent, the select time would be 0;
         // otherwise if some partition already has some data accumulated but not ready yet,
@@ -345,8 +370,12 @@ public class Sender implements Runnable {
      */
     private List<ClientRequest> createProduceRequests(Map<Integer, List<RecordBatch>> collated, long now) {
         List<ClientRequest> requests = new ArrayList<ClientRequest>(collated.size());
-        for (Map.Entry<Integer, List<RecordBatch>> entry : collated.entrySet())
-            requests.add(produceRequest(now, entry.getKey(), acks, requestTimeout, entry.getValue()));
+
+        for (Map.Entry<Integer, List<RecordBatch>> entry : collated.entrySet()) {
+            ClientRequest clientRequest = produceRequest(now, entry.getKey(), acks, requestTimeout, entry.getValue());
+            requests.add(clientRequest);
+        }
+
         return requests;
     }
 
@@ -356,16 +385,21 @@ public class Sender implements Runnable {
     private ClientRequest produceRequest(long now, int destination, short acks, int timeout, List<RecordBatch> batches) {
         Map<TopicPartition, ByteBuffer> produceRecordsByPartition = new HashMap<TopicPartition, ByteBuffer>(batches.size());
         final Map<TopicPartition, RecordBatch> recordsByPartition = new HashMap<TopicPartition, RecordBatch>(batches.size());
+
         for (RecordBatch batch : batches) {
             TopicPartition tp = batch.topicPartition;
             produceRecordsByPartition.put(tp, batch.records.buffer());
             recordsByPartition.put(tp, batch);
         }
         ProduceRequest request = new ProduceRequest(acks, timeout, produceRecordsByPartition);
+
+        //生成的RequestSend是真正的网络IO发送对象 格式符合kafak协议
         RequestSend send = new RequestSend(Integer.toString(destination),
                                            this.client.nextRequestHeader(ApiKeys.PRODUCE),
                                            request.toStruct());
+
         RequestCompletionHandler callback = new RequestCompletionHandler() {
+            @Override
             public void onComplete(ClientResponse response) {
                 handleProduceResponse(response, recordsByPartition, time.milliseconds());
             }
